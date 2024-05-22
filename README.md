@@ -23,6 +23,7 @@ Qualitative results on SHREC2014 by a baseline (top) method vs Ours (bottom).
 
 ## Quantitative Results
 Quantitative results of our method against a few SOTAs.
+
 ![图片](https://github.com/cyy1998/CFTTSL/assets/37933688/85677aca-597e-43c6-896c-0f9ec5f6a586)
 ![图片](https://github.com/cyy1998/CFTTSL/assets/37933688/73dca006-8eb2-48fc-8e4c-4c92735ccbd3)
 
