@@ -17,7 +17,7 @@ A workable basic version of the code for CLIP adapted for ZS-SBIR has been uploa
 
 ## Qualitative Results
 
-Qualitative results on SHREC2014 by a baseline (top) method vs Ours (bottom).
+Qualitative results on SHREC2014 vs our methods.
 ![retrieval1](https://github.com/cyy1998/CFTTSL/assets/37933688/216e281f-55bd-4fc7-bebf-87c081d40d2f)
 
 
