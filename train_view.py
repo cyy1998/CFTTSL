@@ -64,9 +64,6 @@ def get_data(sketch_datadir,val_sketch_datadir,view_datadir):
         transforms.RandomRotation(degrees=15),
         transforms.ColorJitter(),  # Randomly change the brightness, contrast, and saturation of the image
         transforms.RandomHorizontalFlip(),
-        # transforms.RandomVerticalFlip(),
-        # transforms.RandomCrop(224),
-        # transforms.CenterCrop(size=224),
         transforms.ToTensor(),
         transforms.Normalize([0.5, 0.5, 0.5],
                              [0.5, 0.5, 0.5])])  # Imagenet standards
@@ -78,7 +75,7 @@ def get_data(sketch_datadir,val_sketch_datadir,view_datadir):
                              [0.5, 0.5, 0.5])])
 
     view_transform = transforms.Compose([
-        transforms.Resize(299),
+        transforms.Resize(224),
         transforms.ToTensor(),
         transforms.Normalize([0.5, 0.5, 0.5],
                              [0.5, 0.5, 0.5])])
@@ -118,7 +115,7 @@ def val(sketch_model,classifier,val_sketch_dataloader,use_gpu):
         return val_acc
 
 
-def train_view(view_model,classifier,criterion_soft,criterion_am,criterion_transfer,class_centroid,optimizer_model,view_dataloader,use_gpu):
+def train_view(view_model,classifier,criterion_soft,criterion_am,optimizer_model,view_dataloader,use_gpu):
     view_model.train()
     classifier.train()
 
@@ -168,18 +165,15 @@ def train_view(view_model,classifier,criterion_soft,criterion_am,criterion_trans
 
         feature,logits = classifier.forward(view_features)
         cls_loss = criterion_am(logits, view_labels)
-        transfer_loss=criterion_transfer(feature, view_labels,class_centroid)
-        loss = transfer_loss
+        loss = cls_loss
 
 
         _, predicted = torch.max(logits.data, 1)
         total += view_labels.size(0)
         correct += (predicted == view_labels).sum()
         avg_acc = correct.item() / total
-
-        optimizer_model.zero_grad()
         loss.backward()
-
+        optimizer_model.zero_grad()
         optimizer_model.step()
 
         if (batch_idx + 1) % args.print_freq == 0:
@@ -213,14 +207,8 @@ def main():
     view_model = MVCNN(args.model,args.num_classes)
     view_model.cuda()
 
-    #if args.model == 'alexnet':
     classifier = Classifier(args.alph, args.feat_dim, args.num_classes)
     classifier.cuda()
-    classifier1 = torch.load(args.model_dir + '/'  +args.model+ '_best_baseline_sketch_classifier'  + '.pth')
-    class_centroid = nn.functional.normalize(classifier1["module.fc5.weight"], dim=0).permute(1,0)
-    #elif args.model == 'resnet50':
-        #classifier = Classifier(args.alph,args.feat_dim, args.num_classes)
-        #classifier.cuda()
 
     ignored_keys = ["L2Classifier.fc2","L2Classifier.fc4"]
     if use_gpu:
@@ -240,7 +228,6 @@ def main():
     #print(pretrained_dict)
     # Cross Entropy Loss and Center Loss
     criterion_am = AMSoftMaxLoss()
-    criterion_transfer= TransferLoss()
     criterion_soft = nn.CrossEntropyLoss()
     optimizer_model = torch.optim.SGD([{"params":view_model.parameters()},
                                        {"params":classifier.parameters(),"lr":args.lr_model*10}],
@@ -256,7 +243,7 @@ def main():
         print("++++++++++++++++++++++++++")
         # save model
 
-        avg_acc=train_view(view_model,classifier,criterion_soft,criterion_am,criterion_transfer,class_centroid,optimizer_model,view_trainloader,use_gpu)
+        avg_acc=train_view(view_model,classifier,criterion_soft,criterion_am,optimizer_model,view_trainloader,use_gpu)
         
         if epoch>60 and epoch % args.save_model_freq == 0:
             torch.save(view_model.state_dict(),

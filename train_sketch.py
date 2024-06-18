@@ -19,7 +19,7 @@ from classifier import Classifier
 from view_dataset_reader import MultiViewDataSet
 from am_softmax import AMSoftMaxLoss
 from focal_am_loss import FocalAMSoftMaxLoss
-from center_loss import CenterLoss
+from transfer_loss import TransferLoss
 
 parser = argparse.ArgumentParser("Sketch_View Modality")
 # dataset
@@ -36,7 +36,7 @@ parser.add_argument('--max-epoch', type=int, default=305)
 parser.add_argument('--stepsize', type=int, default=10)
 parser.add_argument('--gamma', type=float, default=0.9, help="learning rate decay")
 parser.add_argument('--feat-dim', type=int, default=4096, help="feature size")
-parser.add_argument('--alph', type=float, default=12, help="L2 alph")
+parser.add_argument('--alph', type=float, default=0.5, help="L2 alph")
 # model
 parser.add_argument('--model', type=str, choices=['alexnet', 'vgg16', 'vgg19','resnet50','inceptionresnetv2'], default='alexnet')
 parser.add_argument('--pretrain', type=bool, choices=[True, False], default=True)
@@ -59,7 +59,7 @@ def get_data(sketch_datadir,view_datadir):
          traindir: path of the traing picture
     """
     image_transforms = transforms.Compose([
-        transforms.Resize(299),
+        transforms.Resize(224),
         transforms.RandomRotation(degrees=15),
         transforms.ColorJitter(),  # Randomly change the brightness, contrast, and saturation of the image
         transforms.RandomHorizontalFlip(),
@@ -70,9 +70,15 @@ def get_data(sketch_datadir,view_datadir):
         transforms.Normalize([0.5, 0.5, 0.5],
                              [0.5, 0.5, 0.5])])  # Imagenet standards
 
+    val_transform = transforms.Compose([
+        transforms.Resize(224),
+        transforms.ToTensor(),
+        transforms.Normalize([0.5, 0.5, 0.5],
+                             [0.5, 0.5, 0.5])])
+
 
     view_transform = transforms.Compose([
-        transforms.Resize(299),
+        transforms.Resize(224),
         transforms.ToTensor(),
         transforms.Normalize([0.5, 0.5, 0.5],
                              [0.5, 0.5, 0.5])])
@@ -89,7 +95,7 @@ def get_data(sketch_datadir,view_datadir):
     return sketch_dataloaders,val_sketch_dataloaders,view_dataloaders
 
 
-def train_sketch(sketch_model, classifier, criterion_soft, criterion_am,criterion_transfer,optimizer_model, sketch_dataloader, use_gpu):
+def train_sketch(sketch_model, classifier, criterion_soft, criterion_am,criterion_transfer,class_centroid,optimizer_model, sketch_dataloader, use_gpu):
     sketch_model.train()
     classifier.train()
 
@@ -112,18 +118,18 @@ def train_sketch(sketch_model, classifier, criterion_soft, criterion_am,criterio
         concat_feature = sketch_features
         concat_labels = sketch_labels
 
-        feature, logits,weight = classifier.forward(concat_feature)
+        feature, logits= classifier.forward(concat_feature)
         cls_loss = criterion_am(logits, concat_labels)
-        transfer_loss=criterion_transfer(feature,weight, concat_labels)
-        loss = transfer_loss
+        transfer_loss=criterion_transfer(feature,weight, concat_labels,class_centroid)
+        loss = cls_loss+args.alph*transfer_loss
         _, predicted = torch.max(logits.data, 1)
         total += concat_labels.size(0)
         correct += (predicted == concat_labels).sum()
         avg_acc = correct.item() / total
 
-        optimizer_model.zero_grad()
+        
         loss.backward()
-
+        optimizer_model.zero_grad()
         optimizer_model.step()
 
         if (batch_idx + 1) % args.print_freq == 0:
@@ -155,15 +161,18 @@ def main():
 
     sketch_model = SketchModel(args.model, args.num_classes)
     sketch_model.cuda()
-    classifier = Classifier(args.alph, args.feat_dim, args.num_classes)
+    classifier = Classifier(12, args.feat_dim, args.num_classes)
     classifier.cuda()
+
+    classifier1 = torch.load(args.model_dir + '/'  +args.model+ '_baseline_view_classifier.pth')
+    class_centroid = nn.functional.normalize(classifier1["module.fc5.weight"], dim=0).permute(1,0)
     
     if use_gpu:
         sketch_model = nn.DataParallel(sketch_model).cuda()
         classifier = nn.DataParallel(classifier).cuda()
     
     criterion_am = AMSoftMaxLoss()
-    criterion_transfer= CenterLoss(num_classes=args.num_classes,feat_dim=128)
+    criterion_transfer= TransferLoss()
     criterion_soft = nn.CrossEntropyLoss()
 
     optimizer_model = torch.optim.SGD([{"params": sketch_model.parameters()},
@@ -181,7 +190,7 @@ def main():
         # save model
 
         avg_acc = train_sketch(sketch_model, classifier, criterion_soft, criterion_am,criterion_transfer,
-                        optimizer_model, sketch_trainloader, use_gpu)
+                        class_centroid,optimizer_model, sketch_trainloader, use_gpu)
 #         if epoch > 60 and epoch % args.save_model_freq == 0:
 #             torch.save(sketch_model.state_dict(),
 #                        args.model_dir + '/' + args.model + '_baseline_sketch_model' + '_' + str(epoch) + '.pth')
